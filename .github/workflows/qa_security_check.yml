@@ -1,0 +1,71 @@
+name: Ultimate QA & Security Suite 2026
+
+on:
+  repository_dispatch:
+    types: [run_full_audit]
+
+jobs:
+  comprehensive-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # 1. اختبارات الوحدة (Vitest)
+      - name: Run Vitest
+        run: |
+          npm install
+          npx vitest run --reporter=json > vitest_results.json || true
+
+      # 2. اختبارات الواجهة (Playwright) + Percy (التصميم)
+      - name: Run Playwright & Percy
+        env:
+          PERCY_TOKEN: ${{ secrets.PERCY_TOKEN }} # ستحتاج لإضافته لاحقاً
+        run: |
+          npx playwright install --with-deps
+          npx percy exec -- npx playwright test --reporter=json > playwright_results.json || true
+
+      # 3. اختبارات الأداء (k6)
+      - name: Run k6 Load Test
+        run: |
+          docker run --rm -i grafana/k6 run - <tests/performance.js --out json=k6_results.json || true
+
+      # 4. الأمن (OWASP ZAP)
+      - name: OWASP ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: ${{ github.event.client_payload.target_url }}
+          artifact_name: 'zap_report'
+
+      # 5. الأمن (Nuclei)
+      - name: Nuclei Vulnerability Scan
+        uses: projectdiscovery/nuclei-action@main
+        with:
+          target: ${{ github.event.client_payload.target_url }}
+
+      # 6. جمع النتائج وتوليد تقرير Allure
+      - name: Generate Allure Report
+        uses: simple-elf/allure-report-action@master
+        if: always()
+        with:
+          allure_results: allure-results
+          allure_report: allure-report
+          gh_pages: gh-pages
+
+      # 7. إرسال النتائج النهائية إلى n8n للتحليل بواسطة AI
+      - name: Send Data to n8n
+        if: always()
+        run: |
+          curl -X POST "${{ github.event.client_payload.callback_url }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "status": "completed",
+            "allure_report_url": "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}",
+            "target": "${{ github.event.client_payload.target_url }}"
+          }'
