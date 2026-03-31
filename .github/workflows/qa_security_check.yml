@@ -23,10 +23,10 @@ jobs:
           npm install
           npx vitest run --reporter=json > vitest_results.json || true
 
-      # 2. اختبارات الواجهة (Playwright) + Percy (التصميم)
+      # 2. اختبارات الواجهة (Playwright) + Percy
       - name: Run Playwright & Percy
         env:
-          PERCY_TOKEN: ${{ secrets.PERCY_TOKEN }} # ستحتاج لإضافته لاحقاً
+          PERCY_TOKEN: ${{ secrets.PERCY_TOKEN }}
         run: |
           npx playwright install --with-deps
           npx percy exec -- npx playwright test --reporter=json > playwright_results.json || true
@@ -48,6 +48,8 @@ jobs:
         uses: projectdiscovery/nuclei-action@main
         with:
           target: ${{ github.event.client_payload.target_url }}
+          json: true
+          output: nuclei_results.json
 
       # 6. جمع النتائج وتوليد تقرير Allure
       - name: Generate Allure Report
@@ -58,14 +60,19 @@ jobs:
           allure_report: allure-report
           gh_pages: gh-pages
 
-      # 7. إرسال النتائج النهائية إلى n8n للتحليل بواسطة AI
+      # 7. إرسال النتائج النهائية (مع البيانات الفعلية) إلى n8n
       - name: Send Data to n8n
         if: always()
         run: |
           curl -X POST "${{ github.event.client_payload.callback_url }}" \
           -H "Content-Type: application/json" \
-          -d '{
-            "status": "completed",
-            "allure_report_url": "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}",
-            "target": "${{ github.event.client_payload.target_url }}"
-          }'
+          -d "{
+            \"status\": \"completed\",
+            \"target\": \"${{ github.event.client_payload.target_url }}\",
+            \"allure_report_url\": \"https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}\",
+            \"results\": {
+              \"vitest\": $(cat vitest_results.json || echo \"[]\"),
+              \"playwright\": $(cat playwright_results.json || echo \"[]\"),
+              \"nuclei\": $(cat nuclei_results.json | jq -s '.' || echo \"[]\")
+            }
+          }"
